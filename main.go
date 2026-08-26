@@ -5,9 +5,10 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"log/slog"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -16,114 +17,120 @@ import (
 const remDir = ".rem"
 const remDBFile = "db"
 
-var migrations = []string{
-	`CREATE TABLE IF NOT EXISTS notification (
-    notification_id INTEGER PRIMARY KEY ASC,
-    title TEXT NOT NULL,
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    dismissed_at DATETIME DEFAULT NULL,
-    remainder_id INTEGER DEFAULT NULL,
-    FOREIGN KEY (remainder_id) REFERENCES remainder
-);
-`,
-	`CREATE TABLE IF NOT EXISTS remainder (
-    remainder_id INTEGER PRIMARY KEY ASC,
-    title TEXT NOT NULL,
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    scheduled_at DATE NOT NULL,
-    period TEXT DEFAULT NULL,
-    finished_at DATETIME DEAFULT NULL
-);
-
-`,
+type UserError struct {
+	Message string
+	Err     error
+	Usage   *Command
 }
 
-type InvalidDbSchemeErr struct {
-	Expected string
-	Actual   string
+func (e *UserError) Error() string {
+	return e.Err.Error()
 }
 
-func (e InvalidDbSchemeErr) Error() string {
-	return "invalid db scheme"
+func (e *UserError) Unwrap() error {
+	return e.Err
 }
 
-var (
-	dbSchemeTooNewErr = errors.New("database scheme is too new")
+type RunFn func(cmd *Command, programName string, args []string) error
+
+type Command struct {
+	Name        string
+	Signature   string
+	Description string
+	Run         RunFn
+}
+
+type DescriptionType int
+
+const (
+	DescriptionShort DescriptionType = iota
+	DescriptionFull
 )
 
-func createSchema(ctx context.Context, db *sql.DB) error {
-	tx, err := db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
-	}
-
-	sql := `CREATE TABLE IF NOT EXISTS migration (
-    applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    query TEXT NOT NULL
-);
-`
-	_, err = tx.ExecContext(ctx, sql, nil)
-	if err != nil {
-		return fmt.Errorf("failed to create migrations table: %w", err)
-	}
-
-	migrationRows, err := tx.QueryContext(ctx, "SELECT query FROM migration")
-	if err != nil {
-		return fmt.Errorf("failed to get migrations records from db: %w", err)
-	}
-
-	var queries []string
-	for migrationRows.Next() {
-		var query string
-		err = migrationRows.Scan(&query)
-		if err != nil {
-			return err
+func chopByDelim(str string, delim rune) string {
+	for i, c := range str {
+		if c == delim {
+			return str[:i]
 		}
-
-		queries = append(queries, query)
 	}
 
-	closeErr := migrationRows.Close()
-	if closeErr != nil {
-		return fmt.Errorf("failed to close rows during reading migration table: %w", err)
+	return str
+}
+
+func (c *Command) Describe(programName string, pad int, descriptionType DescriptionType) {
+	fmt.Printf("%*s%s %s", pad, "", programName, c.Name)
+	if c.Signature != "" {
+		fmt.Printf(" %s", c.Signature)
 	}
+	fmt.Println()
 
-	if err != nil {
-		return fmt.Errorf("failed to scan migration table: %w", err)
-	}
+	if c.Description != "" {
+		switch descriptionType {
+		case DescriptionShort:
+			shortDescription := chopByDelim(c.Description, '\n')
+			fmt.Printf("%*s    %s\n", pad, "", shortDescription)
+			if len(strings.Trim(c.Description, "\n")) < len(c.Description) {
+				fmt.Printf("%*s    ...\n", pad+2, "")
+			}
 
-	for index, query := range queries {
-		if index >= len(migrations) {
-			return dbSchemeTooNewErr
-		}
-
-		if query != migrations[index] {
-			return &InvalidDbSchemeErr{
-				Expected: migrations[index],
-				Actual:   query,
+		case DescriptionFull:
+			strList := strings.Split(c.Description, "\n")
+			for _, str := range strList {
+				fmt.Printf("%*s    %s\n", pad, "", str)
 			}
 		}
 	}
+}
 
-	for i := len(queries); i < len(migrations); i++ {
-		slog.Info("applying migration", "№", i)
-		_, err = tx.ExecContext(ctx, migrations[i])
-		if err != nil {
-			return fmt.Errorf("failed to apply %d migration: %w", i, err)
-		}
+var Commands = []Command{
+	{
+		Name:      "n:new",
+		Signature: "<title...>",
+		Description: `Add a new Notification manually.
+This Notification is not associated with any specific Reminder. You just create
+it in the moment to not forget something within the same day.`,
+		Run: NotificationNewRun,
+	},
+}
 
-		_, err = tx.ExecContext(ctx, "INSERT INTO migration (query) VALUES (?)", migrations[i])
-		if err != nil {
-			return fmt.Errorf("failed to save exequted query into migration table: %w", err)
+func NotificationNewRun(cmd *Command, programName string, args []string) error {
+	if len(args) < 1 {
+		err := errors.New("expected title")
+
+		return &UserError{
+			Message: err.Error(),
+			Err:     err,
+			Usage:   cmd,
 		}
 	}
 
-	err = tx.Commit()
+	db, err := OpenRemDB()
 	if err != nil {
-		return fmt.Errorf("failed to close transaction: %w", err)
+		return &UserError{
+			Message: explainDBError(err),
+			Err:     err,
+			Usage:   nil,
+		}
 	}
+
+	defer db.Close()
+
+	storage := NewStorage(db)
+
+	title := args[0]
+	err = storage.CreateNotificationWithTitle(context.TODO(), title)
+	if err != nil {
+		return err
+	}
+
+	notificationList, err := storage.GetActiveGroupedNotifications(context.TODO())
+	renderGroupedNotifications(os.Stdout, notificationList)
 
 	return nil
+}
+
+func renderGroupedNotifications(w io.Writer, notifications []Notification) {
+	panic("implement me")
 }
 
 func createRemDirIfNotExists() (string, error) {
@@ -141,39 +148,68 @@ func createRemDirIfNotExists() (string, error) {
 	return path, nil
 }
 
-func main() {
+func OpenRemDB() (*sql.DB, error) {
 	appDir, err := createRemDirIfNotExists()
 	if err != nil {
-		slog.Error("failed to create application directory", "err", err.Error())
+		return nil, fmt.Errorf("failed to create application directory: %w", err)
 
-		os.Exit(1)
 	}
 
 	db, err := sql.Open("sqlite3", filepath.Join(appDir, remDBFile))
 	if err != nil {
-		slog.Error("failed to open database connection: ", "err", err.Error())
-
-		return
+		return nil, fmt.Errorf("failed to open database connection: %w", err)
 	}
-
-	defer db.Close()
 
 	runCtx, cancel := context.WithTimeout(context.Background(), time.Second*15)
 	defer cancel()
 
-	err = createSchema(runCtx, db)
+	s := NewStorage(db)
+
+	err = s.CreateSchema(runCtx)
 	if err != nil {
-		invalidSchemeErr, ok := errors.AsType[*InvalidDbSchemeErr](err)
-		if ok {
-			slog.Error("schema is invalid.")
-			slog.Error("expected", "value", invalidSchemeErr.Expected)
-			slog.Error("actual", "value", invalidSchemeErr.Actual)
-
-			os.Exit(1)
-		}
-
-		slog.Error("failed to create schema.", "err", err.Error())
-
-		os.Exit(1)
+		return nil, err
 	}
+
+	return db, nil
+}
+
+const DefaultCommand = "n:new"
+
+func main() {
+	programName := os.Args[0]
+	commandName := DefaultCommand
+	if len(os.Args) > 1 {
+		commandName = os.Args[1]
+	}
+
+	for _, cmd := range Commands {
+		if cmd.Name == commandName {
+			args := []string{}
+			if len(os.Args) >= 2 {
+				args = os.Args[2:]
+			}
+			err := cmd.Run(&cmd, programName, args)
+			if err != nil {
+				userErr, ok := errors.AsType[*UserError](err)
+				if ok {
+					if userErr.Usage != nil {
+						fmt.Fprintln(os.Stderr, "Usage:")
+						userErr.Usage.Describe(programName, 2, DescriptionShort)
+					}
+					fmt.Fprintf(os.Stderr, "ERROR: %s\n", userErr.Message)
+
+					os.Exit(1)
+				}
+
+				fmt.Fprintf(os.Stderr, "ERRRO: %s\n", err.Error())
+
+				os.Exit(1)
+			}
+
+			return
+		}
+	}
+
+	fmt.Printf("ERROR: unknown command `%s`\n", commandName)
+	os.Exit(1)
 }

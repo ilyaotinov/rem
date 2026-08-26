@@ -1,0 +1,18 @@
+package main
+
+import (
+	"database/sql"
+	"time"
+)
+
+type NullInt64 sql.NullInt64
+type NullTime sql.NullTime
+
+type Notification struct {
+	ID          int
+	RemainderID NullInt64
+	GroupID     NullInt64
+	Title       string
+	CreatedAt   time.Time
+	DismissedAt NullTime
+}
