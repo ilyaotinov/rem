@@ -54,8 +54,8 @@ func TestCreateAndReadNotification(t *testing.T) {
 		t.Fatalf("created_at should be set up to recent datetime, got: %s", notif.CreatedAt.String())
 	}
 
-	if notif.GroupID.Int64 != int64(-1) {
-		t.Fatalf("unexpected group_id. expected: %d, got: %d", int64(-1), notif.GroupID.Int64)
+	if notif.GroupID != -1 {
+		t.Fatalf("unexpected group_id. expected: %d, got: %d", -1, notif.GroupID)
 	}
 
 	if notif.RemainderID.Valid {
@@ -65,6 +65,51 @@ func TestCreateAndReadNotification(t *testing.T) {
 	if notif.ID != 1 {
 		t.Fatalf("unexpected notification_id. expected: %d, got: %d", 1, notif.ID)
 	}
+}
+
+func TestStorage_GetActiveGroupedNotifications(t *testing.T) {
+	db, path := newTestDB(t)
+	t.Cleanup(func() {
+		os.RemoveAll(path)
+	})
+
+	ctx := context.Background()
+
+	storage := NewStorage(db)
+	err := storage.CreateSchema(ctx)
+	if err != nil {
+		t.Fatalf("failed to prepare scema: %v", err)
+	}
+
+	notificationList, err := storage.GetActiveGroupedNotifications(ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(notificationList) > 0 {
+		t.Fatalf("notification list has unexpected number of elements. expected: %d, got: %d",
+			0, len(notificationList))
+	}
+
+	err = storage.CreateNotificationWithTitle(ctx, "title 1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	err = storage.CreateNotificationWithTitle(ctx, "title 2")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	notificationList, err = storage.GetActiveGroupedNotifications(ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(notificationList) != 2 {
+		t.Fatalf("notification list has unexpected number of elements. expected: %d, got: %d",
+			2, len(notificationList))
+	}
+
 }
 
 func newTestDB(t *testing.T) (*sql.DB, string) {

@@ -11,7 +11,7 @@ type NullTime sql.NullTime
 type Notification struct {
 	ID          int
 	RemainderID NullInt64
-	GroupID     NullInt64
+	GroupID     int
 	Title       string
 	CreatedAt   time.Time
 	DismissedAt NullTime

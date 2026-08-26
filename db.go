@@ -163,9 +163,8 @@ func (s *Storage) LoadNotificationByID(ctx context.Context, notifID int) (Notifi
 		createdAtStr string
 		dismissedAt  sql.NullTime
 	)
-	var (
-		remainderID, groupID sql.NullInt64
-	)
+	var remainderID sql.NullInt64
+	var groupID int
 
 	query := `SELECT
     notification_id,
@@ -203,7 +202,7 @@ FROM notification WHERE notification_id = ?;`
 	return Notification{
 		ID:          id,
 		RemainderID: NullInt64(remainderID),
-		GroupID:     NullInt64(groupID),
+		GroupID:     groupID,
 		Title:       title,
 		CreatedAt:   createdAt,
 		DismissedAt: NullTime(dismissedAt),
@@ -220,6 +219,48 @@ func (s *Storage) CreateNotificationWithTitle(ctx context.Context, title string)
 }
 
 func (s *Storage) GetActiveGroupedNotifications(ctx context.Context) ([]Notification, error) {
-	panic("implement me")
-	return nil, nil
+	query := `SELECT
+    notification_id, title, datetime(created_at, 'localtime') as ts,
+     remainder_id, ifnull(remainder_id, -notification_id) as group_id 
+FROM notification WHERE dismissed_at IS NULL GROUP BY group_id ORDER BY ts;`
+
+	rows, err := s.db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query active notifications: %w", err)
+	}
+
+	defer rows.Close()
+
+	result := make([]Notification, 0)
+	for rows.Next() {
+		var notifID int
+		var title string
+		var createdAtStr string
+		var remainderID sql.NullInt64
+		var groupID int
+
+		err = rows.Scan(&notifID, &title, &createdAtStr, &remainderID, &groupID)
+		if err != nil {
+			return nil, err
+		}
+
+		createdAt, err := time.Parse(time.DateTime, createdAtStr)
+		if err != nil {
+			return nil, fmt.Errorf("invalid created_at in notification %d: %w", notifID, err)
+		}
+
+		result = append(result, Notification{
+			ID:          notifID,
+			RemainderID: NullInt64(remainderID),
+			GroupID:     groupID,
+			Title:       title,
+			CreatedAt:   createdAt,
+		})
+	}
+
+	if err != nil {
+		return nil, err
+	}
+
+	return result, nil
 }
