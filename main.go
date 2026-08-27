@@ -98,54 +98,11 @@ it in the moment to not forget something within the same day.`,
 		Description: `Dismiss notifications by specified indices.`,
 		Run:         NotificationDismissRun,
 	},
-}
-
-func NotificationDismissRun(cmd *Command, programName string, args []string) error {
-	if len(args) == 0 {
-		return &UserError{
-			Message: "expected indices",
-			Err:     errors.New("expected indices"),
-			Usage:   cmd,
-		}
-	}
-
-	db, err := OpenRemDB()
-	if err != nil {
-		return &UserError{
-			Message: explainDBError(err),
-			Err:     err,
-		}
-	}
-
-	defer db.Close()
-
-	storage := NewStorage(db)
-	indices := make([]int, 0, len(args))
-	for _, arg := range args {
-		val, err := strconv.Atoi(arg)
-		if err != nil {
-			return &UserError{
-				Message: fmt.Sprintf("index must be a number. %s is not", arg),
-				Err:     err,
-				Usage:   cmd,
-			}
-		}
-		indices = append(indices, val)
-	}
-
-	howManyDismissed, err := storage.DismissGroupedNotificationsByIndices(context.TODO(), indices)
-	if err != nil {
-		return fmt.Errorf("failed to dismiss notifications: %w", err)
-	}
-
-	activeNotifications, err := storage.GetActiveGroupedNotifications(context.TODO())
-	if err != nil {
-		return err
-	}
-	renderGroupedNotifications(os.Stdout, activeNotifications)
-	fmt.Fprintf(os.Stdout, "Dismissed %d notifications\n", howManyDismissed)
-
-	return nil
+	{
+		Name:        "n:list",
+		Description: "Show list of current Notifications, but unlike `checkout` do not file them off.",
+		Run:         NotificationListRun,
+	},
 }
 
 func NotificationNewRun(cmd *Command, programName string, args []string) error {
@@ -170,14 +127,157 @@ func NotificationNewRun(cmd *Command, programName string, args []string) error {
 
 	defer db.Close()
 
-	storage := NewStorage(db)
+	ctx := context.TODO()
 
-	err = storage.CreateNotificationWithTitle(context.TODO(), strings.Join(args, " "))
+	tx, err := db.BeginTx(ctx, nil)
+
+	err = CreateNotificationWithTitle(ctx, tx, strings.Join(args, " "))
 	if err != nil {
 		return err
 	}
 
-	notificationList, err := storage.GetActiveGroupedNotifications(context.TODO())
+	err = showActiveNotifications(ctx, tx)
+	if err != nil {
+		return err
+	}
+	err = tx.Commit()
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func NotificationDismissRun(cmd *Command, programName string, args []string) error {
+	if len(args) == 0 {
+		return &UserError{
+			Message: "expected indices",
+			Err:     errors.New("expected indices"),
+			Usage:   cmd,
+		}
+	}
+
+	db, err := OpenRemDB()
+	if err != nil {
+		return &UserError{
+			Message: explainDBError(err),
+			Err:     err,
+		}
+	}
+
+	defer db.Close()
+
+	ctx := context.TODO()
+
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+
+	indices := make([]int, 0, len(args))
+	for _, arg := range args {
+		val, err := strconv.Atoi(arg)
+		if err != nil {
+			return &UserError{
+				Message: fmt.Sprintf("index must be a number. %s is not", arg),
+				Err:     err,
+				Usage:   cmd,
+			}
+		}
+		indices = append(indices, val)
+	}
+
+	howManyDismissed, err := DismissGroupedNotificationsByIndices(ctx, tx, indices)
+	if err != nil {
+		return fmt.Errorf("failed to dismiss notifications: %w", err)
+	}
+
+	err = showActiveNotifications(ctx, tx)
+	if err != nil {
+		return err
+	}
+
+	err = tx.Commit()
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stdout, "Dismissed %d notifications\n", howManyDismissed)
+
+	return nil
+}
+
+func NotificationListRun(_ *Command, _ string, _ []string) error {
+	db, err := OpenRemDB()
+	if err != nil {
+		return &UserError{
+			Message: explainDBError(err),
+			Err:     err,
+		}
+	}
+
+	defer db.Close()
+
+	ctx := context.TODO()
+
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+
+	err = showActiveNotifications(ctx, tx)
+	if err != nil {
+		return err
+	}
+
+	return tx.Commit()
+}
+
+const DefaultCommand = "n:new"
+
+func main() {
+	programName := os.Args[0]
+	commandName := DefaultCommand
+	if len(os.Args) > 1 {
+		commandName = os.Args[1]
+	}
+
+	for _, cmd := range Commands {
+		if cmd.Name == commandName {
+			args := []string{}
+			if len(os.Args) >= 2 {
+				args = os.Args[2:]
+			}
+			err := cmd.Run(&cmd, programName, args)
+			if err != nil {
+				userErr, ok := errors.AsType[*UserError](err)
+				if ok {
+					if userErr.Usage != nil {
+						fmt.Fprintln(os.Stderr, "Usage:")
+						userErr.Usage.Describe(programName, 2, DescriptionShort)
+					}
+					fmt.Fprintf(os.Stderr, "ERROR: %s\n", userErr.Message)
+
+					os.Exit(1)
+				}
+
+				fmt.Fprintf(os.Stderr, "ERRRO: %s\n", err.Error())
+
+				os.Exit(1)
+			}
+
+			return
+		}
+	}
+
+	fmt.Printf("ERROR: unknown command `%s`\n", commandName)
+	os.Exit(1)
+}
+
+func showActiveNotifications(ctx context.Context, tx *sql.Tx) error {
+	notificationList, err := GetActiveGroupedNotifications(ctx, tx)
+	if err != nil {
+		return err
+	}
 	renderGroupedNotifications(os.Stdout, notificationList)
 
 	return nil
@@ -231,53 +331,19 @@ func OpenRemDB() (*sql.DB, error) {
 	runCtx, cancel := context.WithTimeout(context.Background(), time.Second*15)
 	defer cancel()
 
-	s := NewStorage(db)
+	tx, err := db.BeginTx(runCtx, nil)
+	if err != nil {
+		return nil, err
+	}
+	err = CreateSchema(runCtx, tx)
+	if err != nil {
+		return nil, err
+	}
 
-	err = s.CreateSchema(runCtx)
+	err = tx.Commit()
 	if err != nil {
 		return nil, err
 	}
 
 	return db, nil
-}
-
-const DefaultCommand = "n:new"
-
-func main() {
-	programName := os.Args[0]
-	commandName := DefaultCommand
-	if len(os.Args) > 1 {
-		commandName = os.Args[1]
-	}
-
-	for _, cmd := range Commands {
-		if cmd.Name == commandName {
-			args := []string{}
-			if len(os.Args) >= 2 {
-				args = os.Args[2:]
-			}
-			err := cmd.Run(&cmd, programName, args)
-			if err != nil {
-				userErr, ok := errors.AsType[*UserError](err)
-				if ok {
-					if userErr.Usage != nil {
-						fmt.Fprintln(os.Stderr, "Usage:")
-						userErr.Usage.Describe(programName, 2, DescriptionShort)
-					}
-					fmt.Fprintf(os.Stderr, "ERROR: %s\n", userErr.Message)
-
-					os.Exit(1)
-				}
-
-				fmt.Fprintf(os.Stderr, "ERRRO: %s\n", err.Error())
-
-				os.Exit(1)
-			}
-
-			return
-		}
-	}
-
-	fmt.Printf("ERROR: unknown command `%s`\n", commandName)
-	os.Exit(1)
 }

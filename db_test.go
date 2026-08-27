@@ -20,23 +20,23 @@ func TestCreateAndReadNotification(t *testing.T) {
 		}
 	})
 
-	s := NewStorage(db)
-
 	ctx := context.Background()
 
-	err := s.CreateSchema(ctx)
+	tx, err := db.BeginTx(ctx, nil)
+	assertNoError(t, err)
+	err = CreateSchema(ctx, tx)
 	if err != nil {
 		t.Fatalf("failed to create database schema: %v", err)
 	}
 
 	title := "new title"
 
-	err = s.CreateNotificationWithTitle(ctx, title)
+	err = CreateNotificationWithTitle(ctx, tx, title)
 	if err != nil {
 		t.Fatalf("failed to create notification: %v", err)
 	}
 
-	notif, err := s.LoadNotificationByID(ctx, 1)
+	notif, err := LoadNotificationByID(ctx, tx, 1)
 	if err != nil {
 		t.Fatalf("failed to load notification by ID: %v", err)
 	}
@@ -65,6 +65,9 @@ func TestCreateAndReadNotification(t *testing.T) {
 	if notif.ID != 1 {
 		t.Fatalf("unexpected notification_id. expected: %d, got: %d", 1, notif.ID)
 	}
+
+	err = tx.Commit()
+	assertNoError(t, err)
 }
 
 func TestStorage_GetActiveGroupedNotifications(t *testing.T) {
@@ -75,13 +78,15 @@ func TestStorage_GetActiveGroupedNotifications(t *testing.T) {
 
 	ctx := context.Background()
 
-	storage := NewStorage(db)
-	err := storage.CreateSchema(ctx)
+	tx, err := db.BeginTx(ctx, nil)
+	assertNoError(t, err)
+
+	err = CreateSchema(ctx, tx)
 	if err != nil {
 		t.Fatalf("failed to prepare scema: %v", err)
 	}
 
-	notificationList, err := storage.GetActiveGroupedNotifications(ctx)
+	notificationList, err := GetActiveGroupedNotifications(ctx, tx)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -91,16 +96,16 @@ func TestStorage_GetActiveGroupedNotifications(t *testing.T) {
 			0, len(notificationList))
 	}
 
-	err = storage.CreateNotificationWithTitle(ctx, "title 1")
+	err = CreateNotificationWithTitle(ctx, tx, "title 1")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	err = storage.CreateNotificationWithTitle(ctx, "title 2")
+	err = CreateNotificationWithTitle(ctx, tx, "title 2")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	notificationList, err = storage.GetActiveGroupedNotifications(ctx)
+	notificationList, err = GetActiveGroupedNotifications(ctx, tx)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -110,6 +115,8 @@ func TestStorage_GetActiveGroupedNotifications(t *testing.T) {
 			2, len(notificationList))
 	}
 
+	err = tx.Commit()
+	assertNoError(t, err)
 }
 
 func newTestDB(t *testing.T) (*sql.DB, string) {
@@ -127,4 +134,12 @@ func newTestDB(t *testing.T) (*sql.DB, string) {
 	}
 
 	return db, dbPath
+}
+
+func assertNoError(t *testing.T, err error) {
+	t.Helper()
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 }

@@ -45,16 +45,6 @@ func (e InvalidDBSchemaErr) Error() string {
 
 type TooNewDBSchemaErr error
 
-type Storage struct {
-	db *sql.DB
-}
-
-func NewStorage(db *sql.DB) *Storage {
-	return &Storage{
-		db: db,
-	}
-}
-
 func explainDBError(err error) string {
 	if err == nil {
 		return ""
@@ -79,18 +69,13 @@ func explainDBError(err error) string {
 	return fmt.Sprintf("%s\n", err.Error())
 }
 
-func (s *Storage) CreateSchema(ctx context.Context) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
-	}
-
+func CreateSchema(ctx context.Context, tx *sql.Tx) error {
 	sql := `CREATE TABLE IF NOT EXISTS migration (
     applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     query TEXT NOT NULL
 );
 `
-	_, err = tx.ExecContext(ctx, sql, nil)
+	_, err := tx.ExecContext(ctx, sql, nil)
 	if err != nil {
 		return fmt.Errorf("failed to create migrations table: %w", err)
 	}
@@ -149,15 +134,10 @@ func (s *Storage) CreateSchema(ctx context.Context) error {
 		}
 	}
 
-	err = tx.Commit()
-	if err != nil {
-		return fmt.Errorf("failed to close transaction: %w", err)
-	}
-
 	return nil
 }
 
-func (s *Storage) LoadNotificationByID(ctx context.Context, notifID int) (Notification, error) {
+func LoadNotificationByID(ctx context.Context, tx *sql.Tx, notifID int) (Notification, error) {
 	var id int
 	var title string
 	var (
@@ -176,7 +156,7 @@ func (s *Storage) LoadNotificationByID(ctx context.Context, notifID int) (Notifi
     ifnull(remainder_id, -notification_id)
 FROM notification WHERE notification_id = ?;`
 
-	rows, err := s.db.QueryContext(ctx, query, notifID)
+	rows, err := tx.QueryContext(ctx, query, notifID)
 	if err != nil {
 		return Notification{}, fmt.Errorf("failed query notification by id: %w", err)
 	}
@@ -210,8 +190,8 @@ FROM notification WHERE notification_id = ?;`
 	}, nil
 }
 
-func (s *Storage) CreateNotificationWithTitle(ctx context.Context, title string) error {
-	_, err := s.db.ExecContext(ctx, "INSERT INTO notification (title) VALUES (?)", title)
+func CreateNotificationWithTitle(ctx context.Context, tx *sql.Tx, title string) error {
+	_, err := tx.ExecContext(ctx, "INSERT INTO notification (title) VALUES (?)", title)
 	if err != nil {
 		return fmt.Errorf("failed to store notification: %w", err)
 	}
@@ -219,14 +199,14 @@ func (s *Storage) CreateNotificationWithTitle(ctx context.Context, title string)
 	return nil
 }
 
-func (s *Storage) GetActiveGroupedNotifications(ctx context.Context) ([]GroupedNotification, error) {
+func GetActiveGroupedNotifications(ctx context.Context, tx *sql.Tx) ([]GroupedNotification, error) {
 	query := `SELECT
     notification_id, title, datetime(created_at, 'localtime') as ts,
     remainder_id, ifnull(remainder_id, -notification_id) as group_id,
     COUNT(*) as group_count 
 FROM notification WHERE dismissed_at IS NULL GROUP BY group_id ORDER BY ts;`
 
-	rows, err := s.db.QueryContext(ctx, query)
+	rows, err := tx.QueryContext(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query active notifications: %w", err)
 	}
@@ -271,12 +251,13 @@ FROM notification WHERE dismissed_at IS NULL GROUP BY group_id ORDER BY ts;`
 	return result, nil
 }
 
-func (s *Storage) DismissGroupedNotificationsByIndices(
+func DismissGroupedNotificationsByIndices(
 	ctx context.Context,
+	tx *sql.Tx,
 	indices []int,
 ) (int, error) {
-	// TODO: add tx key in ctx, for support transactions.
-	activeNotifications, err := s.GetActiveGroupedNotifications(ctx)
+
+	activeNotifications, err := GetActiveGroupedNotifications(ctx, tx)
 	if err != nil {
 		return 0, err
 	}
@@ -290,7 +271,7 @@ func (s *Storage) DismissGroupedNotificationsByIndices(
 			continue
 		}
 
-		err := s.dismissGroupedNotificationByGroupID(ctx, activeNotifications[index].GroupID)
+		err := dismissGroupedNotificationByGroupID(ctx, tx, activeNotifications[index].GroupID)
 		if err != nil {
 			return 0, err
 		}
@@ -301,11 +282,11 @@ func (s *Storage) DismissGroupedNotificationsByIndices(
 	return howManyDismissed, nil
 }
 
-func (s *Storage) dismissGroupedNotificationByGroupID(ctx context.Context, groupID int) error {
+func dismissGroupedNotificationByGroupID(ctx context.Context, tx *sql.Tx, groupID int) error {
 	query := `UPDATE notification SET dismissed_at = CURRENT_TIMESTAMP
     WHERE dismissed_at IS NULL AND ifnull(remainder_id, -notification_id) = ?`
 
-	_, err := s.db.ExecContext(ctx, query, groupID)
+	_, err := tx.ExecContext(ctx, query, groupID)
 	if err != nil {
 		return err
 	}
