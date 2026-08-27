@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"strings"
 	"time"
 )
@@ -218,10 +219,11 @@ func (s *Storage) CreateNotificationWithTitle(ctx context.Context, title string)
 	return nil
 }
 
-func (s *Storage) GetActiveGroupedNotifications(ctx context.Context) ([]Notification, error) {
+func (s *Storage) GetActiveGroupedNotifications(ctx context.Context) ([]GroupedNotification, error) {
 	query := `SELECT
     notification_id, title, datetime(created_at, 'localtime') as ts,
-     remainder_id, ifnull(remainder_id, -notification_id) as group_id 
+    remainder_id, ifnull(remainder_id, -notification_id) as group_id,
+    COUNT(*) as group_count 
 FROM notification WHERE dismissed_at IS NULL GROUP BY group_id ORDER BY ts;`
 
 	rows, err := s.db.QueryContext(ctx, query)
@@ -231,15 +233,16 @@ FROM notification WHERE dismissed_at IS NULL GROUP BY group_id ORDER BY ts;`
 
 	defer rows.Close()
 
-	result := make([]Notification, 0)
+	result := make([]GroupedNotification, 0)
 	for rows.Next() {
 		var notifID int
 		var title string
 		var createdAtStr string
 		var remainderID sql.NullInt64
 		var groupID int
+		var groupCount int
 
-		err = rows.Scan(&notifID, &title, &createdAtStr, &remainderID, &groupID)
+		err = rows.Scan(&notifID, &title, &createdAtStr, &remainderID, &groupID, &groupCount)
 		if err != nil {
 			return nil, err
 		}
@@ -249,12 +252,15 @@ FROM notification WHERE dismissed_at IS NULL GROUP BY group_id ORDER BY ts;`
 			return nil, fmt.Errorf("invalid created_at in notification %d: %w", notifID, err)
 		}
 
-		result = append(result, Notification{
-			ID:          notifID,
-			RemainderID: NullInt64(remainderID),
-			GroupID:     groupID,
-			Title:       title,
-			CreatedAt:   createdAt,
+		result = append(result, GroupedNotification{
+			Notification: Notification{
+				ID:          notifID,
+				RemainderID: NullInt64(remainderID),
+				GroupID:     groupID,
+				Title:       title,
+				CreatedAt:   createdAt,
+			},
+			GroupCount: groupCount,
 		})
 	}
 
@@ -263,4 +269,46 @@ FROM notification WHERE dismissed_at IS NULL GROUP BY group_id ORDER BY ts;`
 	}
 
 	return result, nil
+}
+
+func (s *Storage) DismissGroupedNotificationsByIndices(
+	ctx context.Context,
+	indices []int,
+) (int, error) {
+	// TODO: add tx key in ctx, for support transactions.
+	activeNotifications, err := s.GetActiveGroupedNotifications(ctx)
+	if err != nil {
+		return 0, err
+	}
+
+	var howManyDismissed int
+	for _, index := range indices {
+		if index < 0 || index >= len(activeNotifications) {
+			fmt.Fprintf(os.Stderr,
+				"WARNING: %d is not a valid index of an active notification\n", index)
+
+			continue
+		}
+
+		err := s.dismissGroupedNotificationByGroupID(ctx, activeNotifications[index].GroupID)
+		if err != nil {
+			return 0, err
+		}
+
+		howManyDismissed += activeNotifications[index].GroupCount
+	}
+
+	return howManyDismissed, nil
+}
+
+func (s *Storage) dismissGroupedNotificationByGroupID(ctx context.Context, groupID int) error {
+	query := `UPDATE notification SET dismissed_at = CURRENT_TIMESTAMP
+    WHERE dismissed_at IS NULL AND ifnull(remainder_id, -notification_id) = ?`
+
+	_, err := s.db.ExecContext(ctx, query, groupID)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }

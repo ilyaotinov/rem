@@ -16,3 +16,8 @@ type Notification struct {
 	CreatedAt   time.Time
 	DismissedAt NullTime
 }
+
+type GroupedNotification struct {
+	Notification
+	GroupCount int
+}

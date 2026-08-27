@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -91,6 +92,60 @@ This Notification is not associated with any specific Reminder. You just create
 it in the moment to not forget something within the same day.`,
 		Run: NotificationNewRun,
 	},
+	{
+		Name:        "n:dismiss",
+		Signature:   "<indices...>",
+		Description: `Dismiss notifications by specified indices.`,
+		Run:         NotificationDismissRun,
+	},
+}
+
+func NotificationDismissRun(cmd *Command, programName string, args []string) error {
+	if len(args) == 0 {
+		return &UserError{
+			Message: "expected indices",
+			Err:     errors.New("expected indices"),
+			Usage:   cmd,
+		}
+	}
+
+	db, err := OpenRemDB()
+	if err != nil {
+		return &UserError{
+			Message: explainDBError(err),
+			Err:     err,
+		}
+	}
+
+	defer db.Close()
+
+	storage := NewStorage(db)
+	indices := make([]int, 0, len(args))
+	for _, arg := range args {
+		val, err := strconv.Atoi(arg)
+		if err != nil {
+			return &UserError{
+				Message: fmt.Sprintf("index must be a number. %s is not", arg),
+				Err:     err,
+				Usage:   cmd,
+			}
+		}
+		indices = append(indices, val)
+	}
+
+	howManyDismissed, err := storage.DismissGroupedNotificationsByIndices(context.TODO(), indices)
+	if err != nil {
+		return fmt.Errorf("failed to dismiss notifications: %w", err)
+	}
+
+	activeNotifications, err := storage.GetActiveGroupedNotifications(context.TODO())
+	if err != nil {
+		return err
+	}
+	renderGroupedNotifications(os.Stdout, activeNotifications)
+	fmt.Fprintf(os.Stdout, "Dismissed %d notifications\n", howManyDismissed)
+
+	return nil
 }
 
 func NotificationNewRun(cmd *Command, programName string, args []string) error {
@@ -117,8 +172,7 @@ func NotificationNewRun(cmd *Command, programName string, args []string) error {
 
 	storage := NewStorage(db)
 
-	title := args[0]
-	err = storage.CreateNotificationWithTitle(context.TODO(), title)
+	err = storage.CreateNotificationWithTitle(context.TODO(), strings.Join(args, " "))
 	if err != nil {
 		return err
 	}
@@ -129,8 +183,22 @@ func NotificationNewRun(cmd *Command, programName string, args []string) error {
 	return nil
 }
 
-func renderGroupedNotifications(w io.Writer, notifications []Notification) {
-	panic("implement me")
+func renderGroupedNotifications(w io.Writer, notifications []GroupedNotification) {
+	for i, notification := range notifications {
+		if notification.GroupCount == 0 {
+			panic("notification group count cannot be null")
+		}
+
+		if notification.GroupCount == 1 {
+			fmt.Fprintf(
+				w, "%d: %s (%s)\n",
+				i, notification.Title, notification.CreatedAt.Format(time.DateTime),
+			)
+		} else {
+			fmt.Fprintf(w, "%d: [%d] %s (%s)\n",
+				i, notification.GroupCount, notification.Title, notification.CreatedAt.Format(time.DateTime))
+		}
+	}
 }
 
 func createRemDirIfNotExists() (string, error) {
