@@ -32,7 +32,7 @@ func (e *UserError) Unwrap() error {
 	return e.Err
 }
 
-type RunFn func(cmd *Command, programName string, args []string) error
+type RunFn func(cmd *Command, args []string) error
 
 type Command struct {
 	Name        string
@@ -109,9 +109,15 @@ it in the moment to not forget something within the same day.`,
 		Description: `Schedule a new reminder`,
 		Run:         ReminderNewRun,
 	},
+	{
+		Name:        "r:dismiss",
+		Signature:   "<index>",
+		Description: "Remove a reminder by index",
+		Run:         ReminderDismissRun,
+	},
 }
 
-func NotificationNewRun(cmd *Command, programName string, args []string) error {
+func NotificationNewRun(cmd *Command, args []string) error {
 	if len(args) < 1 {
 		err := errors.New("expected title")
 
@@ -154,7 +160,7 @@ func NotificationNewRun(cmd *Command, programName string, args []string) error {
 	return nil
 }
 
-func NotificationDismissRun(cmd *Command, programName string, args []string) error {
+func NotificationDismissRun(cmd *Command, args []string) error {
 	if len(args) == 0 {
 		return &UserError{
 			Message: "expected indices",
@@ -212,7 +218,7 @@ func NotificationDismissRun(cmd *Command, programName string, args []string) err
 	return nil
 }
 
-func NotificationListRun(_ *Command, _ string, _ []string) error {
+func NotificationListRun(_ *Command, _ []string) error {
 	db, err := OpenRemDB()
 	if err != nil {
 		return &UserError{
@@ -238,7 +244,7 @@ func NotificationListRun(_ *Command, _ string, _ []string) error {
 	return tx.Commit()
 }
 
-func ReminderNewRun(cmd *Command, programName string, args []string) error {
+func ReminderNewRun(cmd *Command, args []string) error {
 	if len(args) < 1 {
 		return &UserError{
 			Message: "expected title",
@@ -310,10 +316,25 @@ func ReminderNewRun(cmd *Command, programName string, args []string) error {
 	}
 
 	err = showActiveReminders(ctx, tx)
+	if err != nil {
+		return err
+	}
 
 	err = tx.Commit()
 	if err != nil {
 		return err
+	}
+
+	return nil
+}
+
+func ReminderDismissRun(cmd *Command, args []string) error {
+	if len(args) <= 0 {
+		return &UserError{
+			Message: "expected index",
+			Err:     errors.New("reminder dismiss expecte index"),
+			Usage:   cmd,
+		}
 	}
 
 	return nil
@@ -334,7 +355,7 @@ func main() {
 			if len(os.Args) >= 2 {
 				args = os.Args[2:]
 			}
-			err := cmd.Run(&cmd, programName, args)
+			err := cmd.Run(&cmd, args)
 			if err != nil {
 				userErr, ok := errors.AsType[*UserError](err)
 				if ok {
