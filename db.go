@@ -17,12 +17,12 @@ var migrations = []string{
     title TEXT NOT NULL,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     dismissed_at DATETIME DEFAULT NULL,
-    remainder_id INTEGER DEFAULT NULL,
-    FOREIGN KEY (remainder_id) REFERENCES remainder
+    reminder_id INTEGER DEFAULT NULL,
+    FOREIGN KEY (reminder_id) REFERENCES reminder
 );
 `,
-	`CREATE TABLE IF NOT EXISTS remainder (
-    remainder_id INTEGER PRIMARY KEY ASC,
+	`CREATE TABLE IF NOT EXISTS reminder (
+    reminder_id INTEGER PRIMARY KEY ASC,
     title TEXT NOT NULL,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     scheduled_at DATE NOT NULL,
@@ -144,7 +144,7 @@ func LoadNotificationByID(ctx context.Context, tx *sql.Tx, notifID int) (Notific
 		createdAtStr string
 		dismissedAt  sql.NullTime
 	)
-	var remainderID sql.NullInt64
+	var reminderID sql.NullInt64
 	var groupID int
 
 	query := `SELECT
@@ -152,8 +152,8 @@ func LoadNotificationByID(ctx context.Context, tx *sql.Tx, notifID int) (Notific
     title,
     datetime(created_at, 'localtime'),
     datetime(dismissed_at, 'localtime'),
-    remainder_id,
-    ifnull(remainder_id, -notification_id)
+    reminder_id,
+    ifnull(reminder_id, -notification_id)
 FROM notification WHERE notification_id = ?;`
 
 	rows, err := tx.QueryContext(ctx, query, notifID)
@@ -162,7 +162,7 @@ FROM notification WHERE notification_id = ?;`
 	}
 
 	for rows.Next() {
-		err = rows.Scan(&id, &title, &createdAtStr, &dismissedAt, &remainderID, &groupID)
+		err = rows.Scan(&id, &title, &createdAtStr, &dismissedAt, &reminderID, &groupID)
 	}
 
 	closeErr := rows.Close()
@@ -182,7 +182,7 @@ FROM notification WHERE notification_id = ?;`
 
 	return Notification{
 		ID:          id,
-		RemainderID: NullInt64(remainderID),
+		RemainderID: NullInt64(reminderID),
 		GroupID:     groupID,
 		Title:       title,
 		CreatedAt:   createdAt,
@@ -202,7 +202,7 @@ func CreateNotificationWithTitle(ctx context.Context, tx *sql.Tx, title string) 
 func GetActiveGroupedNotifications(ctx context.Context, tx *sql.Tx) ([]GroupedNotification, error) {
 	query := `SELECT
     notification_id, title, datetime(created_at, 'localtime') as ts,
-    remainder_id, ifnull(remainder_id, -notification_id) as group_id,
+    reminder_id, ifnull(reminder_id, -notification_id) as group_id,
     COUNT(*) as group_count 
 FROM notification WHERE dismissed_at IS NULL GROUP BY group_id ORDER BY ts;`
 
@@ -218,11 +218,11 @@ FROM notification WHERE dismissed_at IS NULL GROUP BY group_id ORDER BY ts;`
 		var notifID int
 		var title string
 		var createdAtStr string
-		var remainderID sql.NullInt64
+		var reminderID sql.NullInt64
 		var groupID int
 		var groupCount int
 
-		err = rows.Scan(&notifID, &title, &createdAtStr, &remainderID, &groupID, &groupCount)
+		err = rows.Scan(&notifID, &title, &createdAtStr, &reminderID, &groupID, &groupCount)
 		if err != nil {
 			return nil, err
 		}
@@ -235,7 +235,7 @@ FROM notification WHERE dismissed_at IS NULL GROUP BY group_id ORDER BY ts;`
 		result = append(result, GroupedNotification{
 			Notification: Notification{
 				ID:          notifID,
-				RemainderID: NullInt64(remainderID),
+				RemainderID: NullInt64(reminderID),
 				GroupID:     groupID,
 				Title:       title,
 				CreatedAt:   createdAt,
@@ -282,9 +282,56 @@ func DismissGroupedNotificationsByIndices(
 	return howManyDismissed, nil
 }
 
+func CreateNewReminder(
+	ctx context.Context, tx *sql.Tx,
+	title string, scheduledAt time.Time, period Period) error {
+	query := `INSERT INTO reminder (title, scheduled_at, period) VALUES (?, ?, ?)`
+	renderedPeriod := period.AsSQLDatetimeModifier()
+
+	_, err := tx.ExecContext(ctx, query, title, scheduledAt, renderedPeriod)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func GetActiveReminders(ctx context.Context, tx *sql.Tx) ([]Reminder, error) {
+	query := `SELECT reminder_id, title, scheduled_at, period FROM
+ reminder WHERE finished_at IS NULL ORDER BY scheduled_at DESC`
+
+	rows, err := tx.QueryContext(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+
+	defer rows.Close()
+
+	reminders := make([]Reminder, 0)
+	for rows.Next() {
+		var id int
+		var title string
+		var scheduledAt sql.NullTime
+		var period sql.NullString
+		err = rows.Scan(&id, &title, &scheduledAt, &period)
+		if err != nil {
+			return nil, err
+		}
+
+		reminders = append(reminders, Reminder{
+			ID:          id,
+			Title:       title,
+			ScheduledAt: scheduledAt.Time,
+			Period:      NullString(period),
+		})
+	}
+
+	return reminders, nil
+}
+
 func dismissGroupedNotificationByGroupID(ctx context.Context, tx *sql.Tx, groupID int) error {
 	query := `UPDATE notification SET dismissed_at = CURRENT_TIMESTAMP
-    WHERE dismissed_at IS NULL AND ifnull(remainder_id, -notification_id) = ?`
+    WHERE dismissed_at IS NULL AND ifnull(reminder_id, -notification_id) = ?`
 
 	_, err := tx.ExecContext(ctx, query, groupID)
 	if err != nil {

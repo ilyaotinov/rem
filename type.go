@@ -7,6 +7,7 @@ import (
 
 type NullInt64 sql.NullInt64
 type NullTime sql.NullTime
+type NullString sql.NullString
 
 type Notification struct {
 	ID          int
@@ -20,4 +21,11 @@ type Notification struct {
 type GroupedNotification struct {
 	Notification
 	GroupCount int
+}
+
+type Reminder struct {
+	ID          int
+	Title       string
+	ScheduledAt time.Time
+	Period      NullString
 }

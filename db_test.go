@@ -59,7 +59,7 @@ func TestCreateAndReadNotification(t *testing.T) {
 	}
 
 	if notif.RemainderID.Valid {
-		t.Fatalf("remainder_id expected to be null")
+		t.Fatalf("reminder_id expected to be null")
 	}
 
 	if notif.ID != 1 {

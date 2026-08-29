@@ -1,2 +1,2 @@
 # rem
-Simple remainder applicaiton
+Simple reminder applicaiton

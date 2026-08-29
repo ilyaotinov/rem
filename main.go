@@ -103,6 +103,12 @@ it in the moment to not forget something within the same day.`,
 		Description: "Show list of current Notifications, but unlike `checkout` do not file them off.",
 		Run:         NotificationListRun,
 	},
+	{
+		Name:        "r:new",
+		Signature:   "<title> <scheduled_at> [period]",
+		Description: `Schedule a new reminder`,
+		Run:         ReminderNewRun,
+	},
 }
 
 func NotificationNewRun(cmd *Command, programName string, args []string) error {
@@ -232,6 +238,87 @@ func NotificationListRun(_ *Command, _ string, _ []string) error {
 	return tx.Commit()
 }
 
+func ReminderNewRun(cmd *Command, programName string, args []string) error {
+	if len(args) < 1 {
+		return &UserError{
+			Message: "expected title",
+			Err:     errors.New("expected title for create reminder"),
+			Usage:   cmd,
+		}
+	}
+
+	if len(args) < 2 {
+		return &UserError{
+			Message: "expected scheduled_at",
+			Err:     errors.New("expected scheduled_at for create reminder"),
+			Usage:   cmd,
+		}
+	}
+
+	title := args[0]
+	scheduledAt, err := time.Parse(time.DateOnly, args[1])
+	if err != nil {
+		return &UserError{
+			Message: fmt.Sprintf("scheduled_at must be in format %s", time.DateOnly),
+			Err:     err,
+		}
+	}
+
+	var period Period
+	if len(args) >= 3 {
+		period, err = ParsePeriodFromStr(args[2])
+		if err != nil {
+			invalidPeriodErr, ok := errors.AsType[*InvalidPeriodError](err)
+			if ok {
+				return &UserError{
+					Message: invalidPeriodErr.ExplainUsage(),
+					Err:     invalidPeriodErr,
+				}
+			}
+
+			unknownModifierErr, ok := errors.AsType[*UnknownPeriodModifierError](err)
+			if ok {
+				return &UserError{
+					Message: unknownModifierErr.ExplainUsage(),
+					Err:     unknownModifierErr,
+				}
+			}
+
+			return err
+		}
+	}
+
+	db, err := OpenRemDB()
+	if err != nil {
+		return &UserError{
+			Message: explainDBError(err),
+			Err:     err,
+		}
+	}
+
+	defer db.Close()
+
+	ctx := context.TODO()
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+
+	err = CreateNewReminder(ctx, tx, title, scheduledAt, period)
+	if err != nil {
+		return err
+	}
+
+	err = showActiveReminders(ctx, tx)
+
+	err = tx.Commit()
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
 const DefaultCommand = "n:new"
 
 func main() {
@@ -278,7 +365,28 @@ func showActiveNotifications(ctx context.Context, tx *sql.Tx) error {
 	if err != nil {
 		return err
 	}
+
 	renderGroupedNotifications(os.Stdout, notificationList)
+
+	return nil
+}
+
+func showActiveReminders(ctx context.Context, tx *sql.Tx) error {
+	activeReminders, err := GetActiveReminders(ctx, tx)
+	if err != nil {
+		return err
+	}
+
+	for i, reminder := range activeReminders {
+		if reminder.Period.Valid {
+			fmt.Printf("%d: %s (Scheduled at %s every %s)\n", i, reminder.Title,
+				reminder.ScheduledAt.Format(time.DateTime),
+				reminder.Period.String)
+		} else {
+			fmt.Printf("%d: %s (Scheduled at %s)\n", i, reminder.Title,
+				reminder.ScheduledAt.Format(time.DateTime))
+		}
+	}
 
 	return nil
 }
