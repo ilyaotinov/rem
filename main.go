@@ -337,7 +337,41 @@ func ReminderDismissRun(cmd *Command, args []string) error {
 		}
 	}
 
-	return nil
+	number, err := strconv.Atoi(args[0])
+	if err != nil {
+		return &UserError{
+			Message: fmt.Sprintf("unknown index `%s`", args[0]),
+			Err:     err,
+		}
+	}
+
+	db, err := OpenRemDB()
+	if err != nil {
+		return &UserError{
+			Message: explainDBError(err),
+			Err:     err,
+		}
+	}
+	defer db.Close()
+
+	ctx := context.TODO()
+
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+
+	err = RemoveReminderByNumber(ctx, tx, number)
+	if err != nil {
+		return err
+	}
+
+	err = showActiveReminders(ctx, tx)
+	if err != nil {
+		return err
+	}
+
+	return tx.Commit()
 }
 
 const DefaultCommand = "n:new"

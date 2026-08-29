@@ -329,6 +329,29 @@ func GetActiveReminders(ctx context.Context, tx *sql.Tx) ([]Reminder, error) {
 	return reminders, nil
 }
 
+func RemoveReminderByNumber(ctx context.Context, tx *sql.Tx, number int) error {
+	activeReminders, err := GetActiveReminders(ctx, tx)
+	if err != nil {
+		return err
+	}
+
+	if number < 0 || number >= len(activeReminders) {
+		return fmt.Errorf("%d is not a valid index of a reminder", number)
+	}
+
+	return removeReminderByID(ctx, tx, activeReminders[number].ID)
+}
+
+func removeReminderByID(ctx context.Context, tx *sql.Tx, id int) error {
+	query := "UPDATE reminder SET finished_at = CURRENT_TIMESTAMP WHERE reminder_id = ?"
+	_, err := tx.ExecContext(ctx, query, id)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func dismissGroupedNotificationByGroupID(ctx context.Context, tx *sql.Tx, groupID int) error {
 	query := `UPDATE notification SET dismissed_at = CURRENT_TIMESTAMP
     WHERE dismissed_at IS NULL AND ifnull(reminder_id, -notification_id) = ?`
