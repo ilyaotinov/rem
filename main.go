@@ -126,6 +126,8 @@ it in the moment to not forget something within the same day.`,
 		Description: "Show a list of all active Reminders",
 		Run:         ReminderListRun,
 	},
+	// TODO: r:amend
+	// TODO: help
 }
 
 func CheckoutRun(_ *Command, _ []string) error {
@@ -145,6 +147,7 @@ func CheckoutRun(_ *Command, _ []string) error {
 	if err != nil {
 		return err
 	}
+	defer tx.Rollback()
 
 	err = FireOffReminders(ctx, tx)
 	if err != nil {
@@ -189,6 +192,10 @@ func NotificationNewRun(cmd *Command, args []string) error {
 	ctx := context.TODO()
 
 	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
 
 	err = CreateNotificationWithTitle(ctx, tx, strings.Join(args, " "))
 	if err != nil {
@@ -232,6 +239,7 @@ func NotificationDismissRun(cmd *Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	defer tx.Rollback()
 
 	indices := make([]int, 0, len(args))
 	for _, arg := range args {
@@ -282,6 +290,7 @@ func NotificationListRun(_ *Command, _ []string) error {
 	if err != nil {
 		return err
 	}
+	defer tx.Rollback()
 
 	err = showActiveNotifications(ctx, tx)
 	if err != nil {
@@ -356,6 +365,7 @@ func ReminderNewRun(cmd *Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	defer tx.Rollback()
 
 	err = CreateNewReminder(ctx, tx, title, scheduledAt, period)
 	if err != nil {
@@ -376,7 +386,7 @@ func ReminderNewRun(cmd *Command, args []string) error {
 }
 
 func ReminderDismissRun(cmd *Command, args []string) error {
-	// TODO: add support for multiply indeces like in n:dismisso
+	// TODO: add support for multiply indeces like in n:dismiss
 	if len(args) <= 0 {
 		return &UserError{
 			Message: "expected index",
@@ -408,6 +418,7 @@ func ReminderDismissRun(cmd *Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	defer tx.Rollback()
 
 	err = RemoveReminderByNumber(ctx, tx, number)
 	if err != nil {
@@ -437,6 +448,7 @@ func ReminderListRun(_ *Command, _ []string) error {
 	if err != nil {
 		return err
 	}
+	defer tx.Rollback()
 
 	err = showActiveReminders(ctx, tx)
 	if err != nil {
@@ -575,6 +587,8 @@ func OpenRemDB() (*sql.DB, error) {
 	if err != nil {
 		return nil, err
 	}
+	defer tx.Rollback()
+
 	err = CreateSchema(runCtx, tx)
 	if err != nil {
 		return nil, err
