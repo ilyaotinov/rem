@@ -28,13 +28,13 @@ func (p Period) AsSQLDatetimeModifier() sql.NullString {
 	case PeriodKindNone:
 		return sql.NullString{Valid: false}
 	case PeriodKindDay:
-		return sql.NullString{String: fmt.Sprintf("%d days", p.Length), Valid: true}
+		return sql.NullString{String: fmt.Sprintf("+%d days", p.Length), Valid: true}
 	case PeriodKindWeek:
-		return sql.NullString{String: fmt.Sprintf("%d days", p.Length*7), Valid: true}
+		return sql.NullString{String: fmt.Sprintf("+%d days", p.Length*7), Valid: true}
 	case PeriodKindMonth:
-		return sql.NullString{String: fmt.Sprintf("%d months", p.Length), Valid: true}
+		return sql.NullString{String: fmt.Sprintf("+%d months", p.Length), Valid: true}
 	case PeriodKindYears:
-		return sql.NullString{String: fmt.Sprintf("%d years", p.Length), Valid: true}
+		return sql.NullString{String: fmt.Sprintf("+%d years", p.Length), Valid: true}
 	default:
 		panic("cannot happen")
 	}

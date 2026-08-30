@@ -342,6 +342,32 @@ func RemoveReminderByNumber(ctx context.Context, tx *sql.Tx, number int) error {
 	return removeReminderByID(ctx, tx, activeReminders[number].ID)
 }
 
+func FireOffReminders(ctx context.Context, tx *sql.Tx) error {
+	// Creating new notifications from fired off reminders
+	query := `INSERT INTO notification (title, reminder_id) SELECT title, reminder_id FROM
+reminder WHERE scheduled_at <= date('now', 'localtime') AND finished_at IS NULL;`
+	_, err := tx.ExecContext(ctx, query)
+	if err != nil {
+		return err
+	}
+
+	// Finish all the non-periodic reminders
+	query = `UPDATE reminder SET finished_at = CURRENT_TIMESTAMP WHERE scheduled_at <= date('now', 'localtime') AND finished_at IS NULL AND period IS NULL;`
+	_, err = tx.ExecContext(ctx, query)
+	if err != nil {
+		return err
+	}
+
+	// Reschedule all the period reminders
+	query = `UPDATE reminder SET scheduled_at = date(scheduled_at, period) WHERE scheduled_at <= date('now', 'localtime') AND finished_at IS NULL AND period IS NOT NULL;`
+	_, err = tx.ExecContext(ctx, query)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func removeReminderByID(ctx context.Context, tx *sql.Tx, id int) error {
 	query := "UPDATE reminder SET finished_at = CURRENT_TIMESTAMP WHERE reminder_id = ?"
 	_, err := tx.ExecContext(ctx, query, id)
