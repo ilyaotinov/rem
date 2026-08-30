@@ -115,6 +115,11 @@ it in the moment to not forget something within the same day.`,
 		Description: "Remove a reminder by index",
 		Run:         ReminderDismissRun,
 	},
+	{
+		Name:        "r:list",
+		Description: "Show a list of all active Reminders",
+		Run:         ReminderListRun,
+	},
 }
 
 func NotificationNewRun(cmd *Command, args []string) error {
@@ -329,6 +334,7 @@ func ReminderNewRun(cmd *Command, args []string) error {
 }
 
 func ReminderDismissRun(cmd *Command, args []string) error {
+	// TODO: add support for multiply indeces like in n:dismisso
 	if len(args) <= 0 {
 		return &UserError{
 			Message: "expected index",
@@ -372,6 +378,35 @@ func ReminderDismissRun(cmd *Command, args []string) error {
 	}
 
 	return tx.Commit()
+}
+
+func ReminderListRun(_ *Command, _ []string) error {
+	db, err := OpenRemDB()
+	if err != nil {
+		return &UserError{
+			Message: explainDBError(err),
+			Err:     err,
+		}
+	}
+	defer db.Close()
+
+	ctx := context.TODO()
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+
+	err = showActiveReminders(ctx, tx)
+	if err != nil {
+		return err
+	}
+
+	err = tx.Commit()
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 const DefaultCommand = "n:new"
