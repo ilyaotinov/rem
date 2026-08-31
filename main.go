@@ -319,6 +319,7 @@ func ReminderNewRun(cmd *Command, args []string) error {
 
 	title := args[0]
 	scheduledAt, err := time.Parse(time.DateOnly, args[1])
+	fmt.Println(scheduledAt)
 	if err != nil {
 		return &UserError{
 			Message: fmt.Sprintf("scheduled_at must be in format %s", time.DateOnly),
@@ -524,11 +525,11 @@ func showActiveReminders(ctx context.Context, tx *sql.Tx) error {
 	for i, reminder := range activeReminders {
 		if reminder.Period.Valid {
 			fmt.Printf("%d: %s (Scheduled at %s every %s)\n", i, reminder.Title,
-				reminder.ScheduledAt.Format(time.DateTime),
+				reminder.ScheduledAt.Format(time.DateOnly),
 				reminder.Period.String)
 		} else {
 			fmt.Printf("%d: %s (Scheduled at %s)\n", i, reminder.Title,
-				reminder.ScheduledAt.Format(time.DateTime))
+				reminder.ScheduledAt.Format(time.DateOnly))
 		}
 	}
 

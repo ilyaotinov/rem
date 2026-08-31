@@ -288,7 +288,7 @@ func CreateNewReminder(
 	query := `INSERT INTO reminder (title, scheduled_at, period) VALUES (?, ?, ?)`
 	renderedPeriod := period.AsSQLDatetimeModifier()
 
-	_, err := tx.ExecContext(ctx, query, title, scheduledAt, renderedPeriod)
+	_, err := tx.ExecContext(ctx, query, title, scheduledAt.Format(time.DateOnly), renderedPeriod)
 	if err != nil {
 		return err
 	}
@@ -344,8 +344,8 @@ func RemoveReminderByNumber(ctx context.Context, tx *sql.Tx, number int) error {
 
 func FireOffReminders(ctx context.Context, tx *sql.Tx) error {
 	// Creating new notifications from fired off reminders
-	query := `INSERT INTO notification (title, reminder_id) SELECT title, reminder_id FROM
-reminder WHERE scheduled_at <= date('now', 'localtime') AND finished_at IS NULL;`
+	query := `INSERT INTO notification (title, reminder_id) SELECT r.title, r.reminder_id FROM
+reminder r WHERE r.scheduled_at <= date('now', 'localtime') AND r.finished_at IS NULL;`
 	_, err := tx.ExecContext(ctx, query)
 	if err != nil {
 		return err
