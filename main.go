@@ -132,6 +132,10 @@ it in the moment to not forget something within the same day.`,
 		Description: "Create new notification to be sended to telegram",
 		Run:         TgNewRun,
 	},
+	// TODO: remove tg:new and replace it with r:tg. It will be easier to track what remidners are exists.
+	// TODO: r:tg - schedule at specific time existed reminder to be sended also in telegram
+	// TOOD: if r:dismiss are called on notification scheduled in telegram, dismiss this notification in notifier too.
+	// TODO: in r:list add mark on notification scheduled to send to telegram.
 	// TODO: r:amend
 	// TODO: help
 }
