@@ -126,6 +126,12 @@ it in the moment to not forget something within the same day.`,
 		Description: "Show a list of all active Reminders",
 		Run:         ReminderListRun,
 	},
+	{
+		Name:        "tg:new",
+		Signature:   "<title> <scheduled_at>",
+		Description: "Create new notification to be sended to telegram",
+		Run:         TgNewRun,
+	},
 	// TODO: r:amend
 	// TODO: help
 }
@@ -462,6 +468,58 @@ func ReminderListRun(_ *Command, _ []string) error {
 	}
 
 	return nil
+}
+
+func TgNewRun(cmd *Command, args []string) error {
+	notifierHost := os.Getenv("REM_NOTIFIER_HOST")
+	if notifierHost == "" {
+		return &UserError{
+			Message: "For use this command REM_NOTIFIER_HOST env must be set",
+			Err:     errors.New("REM_NOTIFIER_HOST is not set"),
+		}
+	}
+
+	username := os.Getenv("REM_NOTIFIER_USERNAME")
+	if username == "" {
+		return &UserError{
+			Message: "For use this command REM_NOTIFIER_USERNAME must be set",
+			Err:     errors.New("REM_NOTIFIER_USERNAME is not set"),
+		}
+	}
+
+	password := os.Getenv("REM_NOTIFIER_PASSWORD")
+	if password == "" {
+		return &UserError{
+			Message: "For use this command REM_NOTIFIER_PASSWORD must be set",
+			Err:     errors.New("REM_NOTIFIER_PASSWORD is not set"),
+		}
+	}
+
+	if len(args) < 2 {
+		return &UserError{
+			Message: "invalid signature",
+			Err:     errors.New("invalid signature"),
+			Usage:   cmd,
+		}
+	}
+
+	title := args[0]
+	scheduledAt, err := time.Parse(time.DateTime, args[1])
+	if err != nil {
+		return &UserError{
+			Message: fmt.Sprintf("<scheduled_at> has invalid format. Expected format: %s",
+				time.DateTime),
+			Err: err,
+		}
+	}
+
+	n := &Notifier{
+		Host:     notifierHost,
+		Username: username,
+		Password: password,
+	}
+
+	return n.CreateNewNotifierMessage(context.TODO(), title, scheduledAt)
 }
 
 const DefaultCommand = "checkout"

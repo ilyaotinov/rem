@@ -77,7 +77,7 @@ func CreateSchema(ctx context.Context, tx *sql.Tx) error {
 `
 	_, err := tx.ExecContext(ctx, sql, nil)
 	if err != nil {
-		return fmt.Errorf("failed to create migrations table: %w", err)
+		return fmt.Errorf("failed to create migration table: %w", err)
 	}
 
 	migrationRows, err := tx.QueryContext(ctx, "SELECT query FROM migration")
@@ -101,23 +101,17 @@ func CreateSchema(ctx context.Context, tx *sql.Tx) error {
 		return fmt.Errorf("failed to close rows during reading migration table: %w", err)
 	}
 
-	if err != nil {
-		return fmt.Errorf("failed to scan migration table: %w", err)
-	}
-
 	for index, query := range queries {
 		if index >= len(migrations) {
 			return TooNewDBSchemaErr(errors.New("db scheme too new"))
 		}
 
 		if query != migrations[index] {
-			err = &InvalidDBSchemaErr{
+			return &InvalidDBSchemaErr{
 				Expected: migrations[index],
 				Actual:   query,
 				Index:    index,
 			}
-
-			return err
 		}
 	}
 
