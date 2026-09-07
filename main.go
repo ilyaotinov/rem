@@ -508,11 +508,12 @@ func TgNewRun(cmd *Command, args []string) error {
 	}
 
 	title := args[0]
-	scheduledAt, err := time.Parse(time.DateTime, args[1])
+	const format = "2006-01-02_15:04"
+	scheduledAt, err := time.ParseInLocation(format, args[1], time.Local)
 	if err != nil {
 		return &UserError{
 			Message: fmt.Sprintf("<scheduled_at> has invalid format. Expected format: %s",
-				time.DateTime),
+				format),
 			Err: err,
 		}
 	}
@@ -523,7 +524,7 @@ func TgNewRun(cmd *Command, args []string) error {
 		Password: password,
 	}
 
-	return n.CreateNewNotifierMessage(context.TODO(), title, scheduledAt)
+	return n.CreateNewNotifierMessage(context.TODO(), title, scheduledAt.UTC())
 }
 
 const DefaultCommand = "checkout"
