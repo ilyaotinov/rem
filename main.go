@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -106,36 +107,38 @@ it in the moment to not forget something within the same day.`,
 	},
 	{
 		Name:        "n:list",
-		Description: "Show list of current Notifications, but unlike `checkout` do not file them off.",
+		Description: "Show list of current Notifications, but unlike `checkout` do not fire them off.",
 		Run:         NotificationListRun,
 	},
 	{
 		Name:        "r:new",
 		Signature:   "<title> <scheduled_at> [period]",
-		Description: `Schedule a new reminder`,
+		Description: `Schedule a new reminder.`,
 		Run:         ReminderNewRun,
 	},
 	{
 		Name:        "r:dismiss",
 		Signature:   "<index>",
-		Description: "Remove a reminder by index",
+		Description: "Remove a reminder by index,",
 		Run:         ReminderDismissRun,
 	},
 	{
 		Name:        "r:list",
-		Description: "Show a list of all active Reminders",
+		Description: "Show a list of all active Reminders,",
 		Run:         ReminderListRun,
 	},
 	{
 		Name:        "tg:new",
 		Signature:   "<title> <scheduled_at>",
-		Description: "Create new notification to be sended to telegram",
+		Description: "Create new notification to be sended to telegram,",
 		Run:         TgNewRun,
 	},
-	// TODO: remove tg:new and replace it with r:tg. It will be easier to track what remidners are exists.
-	// TODO: r:tg - schedule at specific time existed reminder to be sended also in telegram
-	// TOOD: if r:dismiss are called on notification scheduled in telegram, dismiss this notification in notifier too.
-	// TODO: in r:list add mark on notification scheduled to send to telegram.
+	{
+		Name:        "tg:list",
+		Description: "show list of scheduled telegram notifications.",
+		Run:         TgListRun,
+	},
+	// TODO: tg:dismiss
 	// TODO: r:amend
 	// TODO: help
 }
@@ -475,28 +478,9 @@ func ReminderListRun(_ *Command, _ []string) error {
 }
 
 func TgNewRun(cmd *Command, args []string) error {
-	notifierHost := os.Getenv("REM_NOTIFIER_HOST")
-	if notifierHost == "" {
-		return &UserError{
-			Message: "For use this command REM_NOTIFIER_HOST env must be set",
-			Err:     errors.New("REM_NOTIFIER_HOST is not set"),
-		}
-	}
-
-	username := os.Getenv("REM_NOTIFIER_USERNAME")
-	if username == "" {
-		return &UserError{
-			Message: "For use this command REM_NOTIFIER_USERNAME must be set",
-			Err:     errors.New("REM_NOTIFIER_USERNAME is not set"),
-		}
-	}
-
-	password := os.Getenv("REM_NOTIFIER_PASSWORD")
-	if password == "" {
-		return &UserError{
-			Message: "For use this command REM_NOTIFIER_PASSWORD must be set",
-			Err:     errors.New("REM_NOTIFIER_PASSWORD is not set"),
-		}
+	n, err := newNotifier()
+	if err != nil {
+		return err
 	}
 
 	if len(args) < 2 {
@@ -518,13 +502,48 @@ func TgNewRun(cmd *Command, args []string) error {
 		}
 	}
 
-	n := &Notifier{
+	return n.CreateNewNotifierMessage(context.TODO(), title, scheduledAt.UTC())
+}
+
+func newNotifier() (*Notifier, error) {
+	notifierHost := os.Getenv("REM_NOTIFIER_HOST")
+	if notifierHost == "" {
+		return nil, &UserError{
+			Message: "For use this command REM_NOTIFIER_HOST env must be set",
+			Err:     errors.New("REM_NOTIFIER_HOST is not set"),
+		}
+	}
+
+	username := os.Getenv("REM_NOTIFIER_USERNAME")
+	if username == "" {
+		return nil, &UserError{
+			Message: "For use this command REM_NOTIFIER_USERNAME must be set",
+			Err:     errors.New("REM_NOTIFIER_USERNAME is not set"),
+		}
+	}
+
+	password := os.Getenv("REM_NOTIFIER_PASSWORD")
+	if password == "" {
+		return nil, &UserError{
+			Message: "For use this command REM_NOTIFIER_PASSWORD must be set",
+			Err:     errors.New("REM_NOTIFIER_PASSWORD is not set"),
+		}
+	}
+
+	return &Notifier{
 		Host:     notifierHost,
 		Username: username,
 		Password: password,
+	}, nil
+}
+
+func TgListRun(_ *Command, _ []string) error {
+	n, err := newNotifier()
+	if err != nil {
+		return err
 	}
 
-	return n.CreateNewNotifierMessage(context.TODO(), title, scheduledAt.UTC())
+	return showActiveTgReminders(n, os.Stdout)
 }
 
 const DefaultCommand = "checkout"
@@ -615,6 +634,30 @@ func renderGroupedNotifications(w io.Writer, notifications []GroupedNotification
 				i, notification.GroupCount, notification.Title, notification.CreatedAt.Format(time.DateTime))
 		}
 	}
+}
+
+func showActiveTgReminders(n *Notifier, w io.Writer) error {
+	ctx := context.TODO()
+	reminders, err := n.GetActiveReminders(ctx)
+	if err != nil {
+		return err
+	}
+
+	slices.SortStableFunc(reminders, func(a TgReminder, b TgReminder) int {
+		if a.ScheduledAt.After(b.ScheduledAt) {
+			return 1
+		} else if a.ScheduledAt.Equal(b.ScheduledAt) {
+			return 0
+		} else {
+			return -1
+		}
+	})
+
+	for i, r := range reminders {
+		fmt.Fprintf(w, "%d: %s (%s)\n", i, r.Title, r.ScheduledAt.Format(time.DateTime))
+	}
+
+	return nil
 }
 
 func createRemDirIfNotExists() (string, error) {

@@ -29,3 +29,9 @@ type Reminder struct {
 	ScheduledAt time.Time
 	Period      NullString
 }
+
+type TgReminder struct {
+	ID          string
+	Title       string
+	ScheduledAt time.Time
+}
