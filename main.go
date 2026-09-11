@@ -606,8 +606,6 @@ func dismissTgReminderByIndices(ctx context.Context, n *Notifier, indices []int)
 				Message: fmt.Sprintf("index `%d` is not exists", index),
 				Err:     errors.New("index is out of range"),
 			}
-
-			continue
 		}
 
 		err = n.DismissReminderByUUID(ctx, reminders[index].ID)
