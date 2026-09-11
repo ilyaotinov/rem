@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"slices"
 	"time"
 )
 
@@ -33,7 +34,7 @@ func (n *Notifier) CreateNewNotifierMessage(ctx context.Context, title string, s
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		fmt.Sprintf("http://%s/notification/", n.Host), bytes.NewBuffer(body))
+		n.notificationURL(), bytes.NewBuffer(body))
 	if err != nil {
 		return err
 	}
@@ -65,7 +66,7 @@ func (n *Notifier) GetActiveReminders(ctx context.Context) ([]TgReminder, error)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
-		fmt.Sprintf("http://%s/notification", n.Host), nil)
+		n.notificationURL(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -102,5 +103,54 @@ func (n *Notifier) GetActiveReminders(ctx context.Context) ([]TgReminder, error)
 		})
 	}
 
+	slices.SortStableFunc(reminders, func(a TgReminder, b TgReminder) int {
+		if a.ScheduledAt.After(b.ScheduledAt) {
+			return 1
+		} else if a.ScheduledAt.Equal(b.ScheduledAt) {
+			return 0
+		} else {
+			return -1
+		}
+	})
+
 	return reminders, nil
+}
+
+func (n *Notifier) DismissReminderByUUID(ctx context.Context, uuid string) error {
+	type requestBody struct {
+		ID string `json:"id"`
+	}
+
+	reqBody := &requestBody{
+		ID: uuid,
+	}
+	reqBodyRaw, err := json.Marshal(reqBody)
+	if err != nil {
+		return err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, n.notificationURL(),
+		bytes.NewBuffer(reqBodyRaw))
+	if err != nil {
+		return err
+	}
+
+	req.SetBasicAuth(n.Username, n.Password)
+
+	response, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("dissmiss telegram notification request failed: %w", err)
+	}
+	defer response.Body.Close()
+
+	if response.StatusCode != http.StatusNoContent {
+		return fmt.Errorf("unexpected status code from dismiss telegram notification response `%d`",
+			response.StatusCode)
+	}
+
+	return nil
+}
+
+func (n *Notifier) notificationURL() string {
+	return fmt.Sprintf("http://%s/notification", n.Host)
 }

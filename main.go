@@ -8,7 +8,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -138,7 +137,12 @@ it in the moment to not forget something within the same day.`,
 		Description: "show list of scheduled telegram notifications.",
 		Run:         TgListRun,
 	},
-	// TODO: tg:dismiss
+	{
+		Name:        "tg:dismiss",
+		Signature:   "<indices...>",
+		Description: "Dismiss telegram notifications by specified indices.",
+		Run:         TgDismissRun,
+	},
 	// TODO: r:amend
 	// TODO: help
 }
@@ -477,34 +481,6 @@ func ReminderListRun(_ *Command, _ []string) error {
 	return nil
 }
 
-func TgNewRun(cmd *Command, args []string) error {
-	n, err := newNotifier()
-	if err != nil {
-		return err
-	}
-
-	if len(args) < 2 {
-		return &UserError{
-			Message: "invalid signature",
-			Err:     errors.New("invalid signature"),
-			Usage:   cmd,
-		}
-	}
-
-	title := args[0]
-	const format = "2006-01-02_15:04"
-	scheduledAt, err := time.ParseInLocation(format, args[1], time.Local)
-	if err != nil {
-		return &UserError{
-			Message: fmt.Sprintf("<scheduled_at> has invalid format. Expected format: %s",
-				format),
-			Err: err,
-		}
-	}
-
-	return n.CreateNewNotifierMessage(context.TODO(), title, scheduledAt.UTC())
-}
-
 func newNotifier() (*Notifier, error) {
 	notifierHost := os.Getenv("REM_NOTIFIER_HOST")
 	if notifierHost == "" {
@@ -537,6 +513,44 @@ func newNotifier() (*Notifier, error) {
 	}, nil
 }
 
+func TgNewRun(cmd *Command, args []string) error {
+	n, err := newNotifier()
+	if err != nil {
+		return err
+	}
+
+	if len(args) < 2 {
+		return &UserError{
+			Message: "invalid signature",
+			Err:     errors.New("invalid signature"),
+			Usage:   cmd,
+		}
+	}
+
+	title := args[0]
+	const format = "2006-01-02_15:04"
+	scheduledAt, err := time.ParseInLocation(format, args[1], time.Local)
+	if err != nil {
+		return &UserError{
+			Message: fmt.Sprintf("<scheduled_at> has invalid format. Expected format: %s",
+				format),
+			Err: err,
+		}
+	}
+
+	err = n.CreateNewNotifierMessage(context.TODO(), title, scheduledAt.UTC())
+	if err != nil {
+		return fmt.Errorf("failed to create telegram reminder: %w", err)
+	}
+
+	err = showActiveTgReminders(n, os.Stdout)
+	if err != nil {
+		return fmt.Errorf("reminder was created but list rendering has failed: %w", err)
+	}
+
+	return nil
+}
+
 func TgListRun(_ *Command, _ []string) error {
 	n, err := newNotifier()
 	if err != nil {
@@ -544,6 +558,65 @@ func TgListRun(_ *Command, _ []string) error {
 	}
 
 	return showActiveTgReminders(n, os.Stdout)
+}
+
+func TgDismissRun(cmd *Command, args []string) error {
+	if len(args) <= 0 {
+		return &UserError{
+			Message: "expected at least one index",
+			Err:     errors.New("invalid argument"),
+			Usage:   cmd,
+		}
+	}
+
+	n, err := newNotifier()
+	if err != nil {
+		return err
+	}
+
+	var indices []int
+	for _, arg := range args {
+		index, err := strconv.Atoi(arg)
+		if err != nil {
+			return &UserError{
+				Message: fmt.Sprintf("`%s` is not a valid index", arg),
+				Err:     err,
+			}
+		}
+		indices = append(indices, index)
+	}
+
+	err = dismissTgReminderByIndices(context.TODO(), n, indices)
+	if err != nil {
+		return err
+	}
+
+	return showActiveTgReminders(n, os.Stdout)
+}
+
+func dismissTgReminderByIndices(ctx context.Context, n *Notifier, indices []int) error {
+	reminders, err := n.GetActiveReminders(ctx)
+	if err != nil {
+		return err
+	}
+
+	for _, index := range indices {
+		if index < 0 || index >= len(reminders) {
+			return &UserError{
+				Message: fmt.Sprintf("index `%d` is not exists", index),
+				Err:     errors.New("index is out of range"),
+			}
+
+			continue
+		}
+
+		err = n.DismissReminderByUUID(ctx, reminders[index].ID)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 const DefaultCommand = "checkout"
@@ -642,16 +715,6 @@ func showActiveTgReminders(n *Notifier, w io.Writer) error {
 	if err != nil {
 		return err
 	}
-
-	slices.SortStableFunc(reminders, func(a TgReminder, b TgReminder) int {
-		if a.ScheduledAt.After(b.ScheduledAt) {
-			return 1
-		} else if a.ScheduledAt.Equal(b.ScheduledAt) {
-			return 0
-		} else {
-			return -1
-		}
-	})
 
 	for i, r := range reminders {
 		fmt.Fprintf(w, "%d: %s (%s)\n", i, r.Title, r.ScheduledAt.Format(time.DateTime))
