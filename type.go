@@ -30,7 +30,7 @@ type Reminder struct {
 	Period      NullString
 }
 
-type TgReminder struct {
+type TgNotification struct {
 	ID          string
 	Title       string
 	ScheduledAt time.Time

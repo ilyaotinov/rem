@@ -404,7 +404,6 @@ func ReminderNewRun(cmd *Command, args []string) error {
 }
 
 func ReminderDismissRun(cmd *Command, args []string) error {
-	// TODO: add support for multiply indeces like in n:dismiss
 	if len(args) <= 0 {
 		return &UserError{
 			Message: "expected index",
@@ -413,12 +412,17 @@ func ReminderDismissRun(cmd *Command, args []string) error {
 		}
 	}
 
-	number, err := strconv.Atoi(args[0])
-	if err != nil {
-		return &UserError{
-			Message: fmt.Sprintf("unknown index `%s`", args[0]),
-			Err:     err,
+	var indices []int
+	for _, arg := range args {
+		index, err := strconv.Atoi(arg)
+		if err != nil {
+			return &UserError{
+				Message: fmt.Sprintf("unknown index `%s`", args[0]),
+				Err:     err,
+			}
 		}
+
+		indices = append(indices, index)
 	}
 
 	db, err := OpenRemDB()
@@ -438,7 +442,7 @@ func ReminderDismissRun(cmd *Command, args []string) error {
 	}
 	defer tx.Rollback()
 
-	err = RemoveReminderByNumber(ctx, tx, number)
+	howManyDismissed, err := dismissRemindersByIndices(ctx, tx, indices)
 	if err != nil {
 		return err
 	}
@@ -446,6 +450,10 @@ func ReminderDismissRun(cmd *Command, args []string) error {
 	err = showActiveReminders(ctx, tx)
 	if err != nil {
 		return err
+	}
+
+	if howManyDismissed > 0 {
+		fmt.Printf("Dismissed %d reminders\n", howManyDismissed)
 	}
 
 	return tx.Commit()
@@ -479,6 +487,19 @@ func ReminderListRun(_ *Command, _ []string) error {
 	}
 
 	return nil
+}
+
+func dismissRemindersByIndices(ctx context.Context, tx *sql.Tx, indices []int) (int, error) {
+	var howManyDismissed int
+	for _, index := range indices {
+		err := RemoveReminderByIndex(ctx, tx, index)
+		if err != nil {
+			return howManyDismissed, err
+		}
+		howManyDismissed++
+	}
+
+	return howManyDismissed, nil
 }
 
 func newNotifier() (*Notifier, error) {
@@ -543,7 +564,7 @@ func TgNewRun(cmd *Command, args []string) error {
 		return fmt.Errorf("failed to create telegram reminder: %w", err)
 	}
 
-	err = showActiveTgReminders(n, os.Stdout)
+	err = showActiveTgNotifications(n, os.Stdout)
 	if err != nil {
 		return fmt.Errorf("reminder was created but list rendering has failed: %w", err)
 	}
@@ -557,7 +578,7 @@ func TgListRun(_ *Command, _ []string) error {
 		return err
 	}
 
-	return showActiveTgReminders(n, os.Stdout)
+	return showActiveTgNotifications(n, os.Stdout)
 }
 
 func TgDismissRun(cmd *Command, args []string) error {
@@ -586,23 +607,28 @@ func TgDismissRun(cmd *Command, args []string) error {
 		indices = append(indices, index)
 	}
 
-	err = dismissTgReminderByIndices(context.TODO(), n, indices)
+	howManyDismissed, err := dismissTgNotificationsByIndices(context.TODO(), n, indices)
 	if err != nil {
 		return err
 	}
 
-	return showActiveTgReminders(n, os.Stdout)
+	if howManyDismissed > 0 {
+		fmt.Printf("Dismissed %d telegram reminders\n", howManyDismissed)
+	}
+
+	return showActiveTgNotifications(n, os.Stdout)
 }
 
-func dismissTgReminderByIndices(ctx context.Context, n *Notifier, indices []int) error {
-	reminders, err := n.GetActiveReminders(ctx)
+func dismissTgNotificationsByIndices(ctx context.Context, n *Notifier, indices []int) (int, error) {
+	reminders, err := n.GetActiveNotifications(ctx)
 	if err != nil {
-		return err
+		return 0, err
 	}
 
+	var howManyDismissed int
 	for _, index := range indices {
 		if index < 0 || index >= len(reminders) {
-			return &UserError{
+			return 0, &UserError{
 				Message: fmt.Sprintf("index `%d` is not exists", index),
 				Err:     errors.New("index is out of range"),
 			}
@@ -610,11 +636,12 @@ func dismissTgReminderByIndices(ctx context.Context, n *Notifier, indices []int)
 
 		err = n.DismissReminderByUUID(ctx, reminders[index].ID)
 		if err != nil {
-			return err
+			return 0, err
 		}
+		howManyDismissed++
 	}
 
-	return nil
+	return howManyDismissed, nil
 }
 
 const DefaultCommand = "checkout"
@@ -707,9 +734,9 @@ func renderGroupedNotifications(w io.Writer, notifications []GroupedNotification
 	}
 }
 
-func showActiveTgReminders(n *Notifier, w io.Writer) error {
+func showActiveTgNotifications(n *Notifier, w io.Writer) error {
 	ctx := context.TODO()
-	reminders, err := n.GetActiveReminders(ctx)
+	reminders, err := n.GetActiveNotifications(ctx)
 	if err != nil {
 		return err
 	}

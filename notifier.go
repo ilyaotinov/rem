@@ -56,7 +56,7 @@ func (n *Notifier) CreateNewNotifierMessage(ctx context.Context, title string, s
 	return nil
 }
 
-func (n *Notifier) GetActiveReminders(ctx context.Context) ([]TgReminder, error) {
+func (n *Notifier) GetActiveNotifications(ctx context.Context) ([]TgNotification, error) {
 	type response struct {
 		Records []struct {
 			ID          string `json:"id"`
@@ -74,7 +74,7 @@ func (n *Notifier) GetActiveReminders(ctx context.Context) ([]TgReminder, error)
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("unable to get tg reminders from external service: %w", err)
+		return nil, fmt.Errorf("unable to get tg notifications from external service: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -88,22 +88,22 @@ func (n *Notifier) GetActiveReminders(ctx context.Context) ([]TgReminder, error)
 		return nil, fmt.Errorf("unexpected response body from external service: %w", err)
 	}
 
-	var reminders []TgReminder
+	var notifications []TgNotification
 	for _, record := range respBody.Records {
 		scheduledAt, err := time.Parse(time.DateTime, record.ScheduledAt)
 		if err != nil {
-			return nil, fmt.Errorf("unexpected time format in get tg reminder list response data: %w",
+			return nil, fmt.Errorf("unexpected time format in get tg notifications list response data: %w",
 				err)
 		}
 
-		reminders = append(reminders, TgReminder{
+		notifications = append(notifications, TgNotification{
 			ID:          record.ID,
 			Title:       record.Title,
 			ScheduledAt: scheduledAt.In(time.Local),
 		})
 	}
 
-	slices.SortStableFunc(reminders, func(a TgReminder, b TgReminder) int {
+	slices.SortStableFunc(notifications, func(a TgNotification, b TgNotification) int {
 		if a.ScheduledAt.After(b.ScheduledAt) {
 			return 1
 		} else if a.ScheduledAt.Equal(b.ScheduledAt) {
@@ -113,7 +113,7 @@ func (n *Notifier) GetActiveReminders(ctx context.Context) ([]TgReminder, error)
 		}
 	})
 
-	return reminders, nil
+	return notifications, nil
 }
 
 func (n *Notifier) DismissReminderByUUID(ctx context.Context, uuid string) error {

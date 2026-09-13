@@ -323,7 +323,7 @@ func GetActiveReminders(ctx context.Context, tx *sql.Tx) ([]Reminder, error) {
 	return reminders, nil
 }
 
-func RemoveReminderByNumber(ctx context.Context, tx *sql.Tx, number int) error {
+func RemoveReminderByIndex(ctx context.Context, tx *sql.Tx, number int) error {
 	activeReminders, err := GetActiveReminders(ctx, tx)
 	if err != nil {
 		return err
